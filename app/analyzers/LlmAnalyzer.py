@@ -1,138 +1,93 @@
-import json
 import os
-import re
-import time
-from typing import List, Dict, Any
-from dataclasses import asdict
-from ollama import Client, ResponseError
-
+import re  # <--- Ajout important pour nettoyer les balises <think>
+from typing import List
+from ollama import Client
 from app.core.config_loader import ConfigLoader
-from app.domain.models import AnonymizationCandidate
 
 
 class LlmAnalyzer:
-    """
-    VERSION 2 (Architecture Juge) :
-    Ce module ne cherche plus les entités lui-même.
-    Il reçoit une liste de candidats (Regex/Presidio) et décide quoi garder/corriger.
-    """
-
     def __init__(self):
         self.config = ConfigLoader()
+        self.model_name = self.config.get("llm.model_fallback", "gpt-oss:20b")
 
-        # Configuration Modèle
-        self.model_name = os.getenv("ANONYMIZATION_MODEL", self.config.get("llm.model_fallback"))
-        env_timeout = os.getenv("LLM_TIMEOUT_SEC")
-        self.timeout_val = int(env_timeout) if env_timeout else self.config.get("llm.timeout_sec", 300)
+        # On augmente drastiquement le timeout car les modèles "Thinker" sont lents
+        # 157s observées -> On met 600s (10min) pour être large sur les grosses pages
+        self.timeout_val = int(self.config.get("llm.timeout_sec", 600))
 
-        # Configuration Prompt Juge
-        self.judge_prompt_template = self.config.get("llm.judge_prompt", "")
-
-        print(f"   [LLM Juge] Modèle: {self.model_name} | Timeout: {self.timeout_val}s")
+        self.prompt_standard = self.config.get("llm.judge_prompt", "")
+        self.prompt_extract = self.config.get("llm.extract_prompt", "")
 
         try:
             self.client = Client(host='http://localhost:11434', timeout=self.timeout_val)
         except Exception as e:
-            print(f"   [LLM] Erreur init client : {e}")
+            print(f"   [LLM Warning] Client init failed: {e}")
 
-    def judge_candidates(self, page_text: str, candidates: List[AnonymizationCandidate]) -> List[Dict[str, Any]]:
-        if not page_text or not candidates:
+    def get_final_redaction_list(self, page_text: str, initial_candidates: List[str], debug: bool = False) -> List[str]:
+        if not page_text.strip():
             return []
 
-        # 1. Préparation
-        candidates_json = [asdict(c) for c in candidates]
-        candidates_str = json.dumps(candidates_json, indent=2, ensure_ascii=False)
+        unique_candidates = sorted(list(set(initial_candidates)))
+        count_candidates = len(unique_candidates)
 
-        try:
-            full_prompt = self.judge_prompt_template.format(
-                candidate_list_json=candidates_str,
-                page_text=page_text
-            )
-        except KeyError:
-            return []
+        # Stratégie de bascule (densité)
+        limit_high_density = 40
+        if count_candidates > limit_high_density:
+            if debug: print(f"   [LLM] Mode EXTRACTION (Densité: {count_candidates})")
+            prompt = self.prompt_extract.format(page_text=page_text)
+        else:
+            if debug: print(f"   [LLM] Mode VALIDATION (Densité: {count_candidates})")
+            candidates_str = "\n".join([f"- {c}" for c in unique_candidates])
+            prompt = self.prompt_standard.format(page_text=page_text, candidates_str=candidates_str)
 
-        print(f"   [LLM] 📤 Envoi de {len(candidates)} candidats (Mode 'Redact Only')...")
+        if debug:
+            print(f"   [LLM] Envoi requête (Timeout={self.timeout_val}s)...")
 
-        # 2. Appel API avec paramètres optimisés
         try:
             response = self.client.chat(
                 model=self.model_name,
-                messages=[{'role': 'user', 'content': full_prompt}],
+                messages=[{'role': 'user', 'content': prompt}],
                 options={
-                    'temperature': 0.0,
-                    'num_predict': 2048,  # On laisse de la marge
-                    'stop': ["Candidate:", "Texte:", "User:"]  # Stop words pour éviter les boucles
+                    'temperature': 0.6,  # Faible, mais pas 0.0 absolu pour éviter les boucles de raisonnement
+                    'num_ctx': 16384,  # CRUCIAL: Mémoire large pour Page + Réflexion + Réponse
+                    'num_predict': -1,  # CRUCIAL: Pas de limite de génération (-1 = infini)
+                    # On retire les 'stop' tokens qui pourraient couper la réflexion
+                    'stop': []
                 }
             )
-            content = response['message']['content']
 
-            # 3. Parsing "Doux" (Soft Parsing)
-            # On n'essaie plus de parser tout le bloc d'un coup, on cherche les items valides
-            validated_items = self._soft_json_parse(content)
+            raw_content = response['message']['content']
 
-            final_entities = []
+            # --- NETTOYAGE DES "PENSÉES" (<think>...</think>) ---
+            # Les modèles type DeepSeek-R1 ou Chain-of-Thought mettent leur raisonnement dans ces balises.
+            # Il faut les retirer pour ne garder que la réponse finale.
+            clean_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
 
-            # 4. Traitement
-            for item in validated_items:
-                text_to_hide = item.get("text")
-                if not text_to_hide: continue
+            if debug:
+                print("\n" + "=" * 20 + " RÉPONSE LLM BRUTE (Sans <think>) " + "=" * 20)
+                print(clean_content)
+                print("=" * 60 + "\n")
 
-                # On cherche dans le texte
-                found = False
-                for match in re.finditer(re.escape(text_to_hide), page_text, re.IGNORECASE):
-                    found = True
-                    final_entities.append({
-                        "start": match.start(),
-                        "end": match.end(),
-                        "type": item.get("type", "LLM_VALIDATED"),
-                        "source": "LLM_JUDGE",
-                        "text_slice": match.group()
-                    })
+            # --- Parsing de la liste ---
+            final_terms = []
+            for line in clean_content.split('\n'):
+                # Nettoyage des puces markdown et espaces
+                clean_line = line.strip().lstrip("-").lstrip("*").strip()
 
-                if not found:
-                    # Petit log discret
-                    pass
+                # Filtrage des lignes parasites
+                if len(clean_line) > 1:
+                    # On évite de capturer des phrases d'intro du type "Voici la liste :"
+                    if "voici" in clean_line.lower() and ":" in clean_line:
+                        continue
+                    if "liste" in clean_line.lower() and "masquer" in clean_line.lower():
+                        continue
 
-            print(f"   [LLM] ✅ {len(final_entities)} éléments confirmés pour masquage.")
-            return final_entities
+                    final_terms.append(clean_line)
+
+            print(f"   [LLM] -> {len(final_terms)} termes identifiés.")
+            return final_terms
 
         except Exception as e:
             print(f"   [LLM Error] {e}")
-            return []
-
-    def _soft_json_parse(self, text: str) -> List[Dict]:
-        """
-        Extrait des objets JSON même si le format global est cassé.
-        Cherche tous les motifs {...} et tente de les lire.
-        """
-        results = []
-
-        # 1. Tentative propre (Global)
-        try:
-            # Nettoyage Markdown
-            clean = text.replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean)
-            if "redactions" in data:
-                return data["redactions"]
-        except:
-            pass  # On passe au mode "Soft"
-
-        # 2. Tentative Regex (Item par item)
-        # On cherche tout ce qui ressemble à un objet JSON simple
-        # Regex : accolade ouvrante, tout sauf accolade fermante, accolade fermante
-        import re
-        # Cette regex capture les objets JSON simples (pas imbriqués)
-        pattern = r"\{[^{}]+\}"
-
-        matches = re.finditer(pattern, text)
-        for match in matches:
-            candidate_str = match.group()
-            try:
-                obj = json.loads(candidate_str)
-                # Vérifie si c'est un item de redaction valide
-                if "text" in obj:
-                    results.append(obj)
-            except:
-                continue
-
-        return results
+            if "Read timed out" in str(e):
+                print("   [Conseil] Augmentez 'timeout_sec' dans config.yaml ou utilisez un modèle plus rapide.")
+            return initial_candidates

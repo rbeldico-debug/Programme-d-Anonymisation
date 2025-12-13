@@ -15,58 +15,91 @@ presidio:
     - "PHONE_NUMBER"
     - "EMAIL_ADDRESS"
     - "FR_SSN"
-    # - "DATE" (Désactivé car géré par le LLM)
+    - "DATE"
+    - "NRP"
 
-  # Règles personnalisées (Regex)
+  # Règles personnalisées (Regex) qui passent AVANT le LLM
   custom_rules:
+    # 1. Regex Téléphone France (Points, Espaces, Tirets)
+    - name: "TelFrance"
+      entity_type: "PHONE_NUMBER"
+      # Capture 01.02.03.04.05 ou 01 02 03 04 05 ou +33 1...
+      regex: "(?:(?:\\+|00)33|0)\\s*[1-9](?:[\\s.-]*\\d{2}){4}"
+      score: 1.0
+
+    # 2. Regex Date de Naissance (JJ/MM/AAAA)
+    - name: "DateNaissance"
+      entity_type: "DATE_TIME"
+      # Capture 28/07/1965 ou 28-07-1965
+      regex: "\\b([0-2][0-9]|3[0-1])\\/(0[1-9]|1[0-2])\\/(\\d{4})\\b"
+      score: 1.0
+
+    # 3. Regex Codes Postaux
     - name: "CodePostalFrance"
       entity_type: "LOCATION"
       regex: "\\b\\d{5}\\b"
       score: 0.5
 
+    # 4. Regex Rues classiques
     - name: "VoirieFrance"
       entity_type: "LOCATION"
       regex: "(?i)\\b(rue|avenue|av\\.|boulevard|bd|impasse|allée|quai|place|route|chemin)\\s+([a-zA-Z0-9\\s\\-\\']+)"
       score: 0.6
 
 # --- Moteur Intelligent (LLM) ---
+# ... (début du fichier inchangé)
+
 llm:
-  model_fallback: "gpt-oss:20b" # ou mistral
+  model_fallback: "gpt-oss:20b"
   timeout_sec: 300
 
-  # LE NOUVEAU PROMPT JUGE
+  # NOUVEAU PROMPT : Stratégie Few-Shot (Liste simple)
+  # Les accolades doubles {{ }} servent à échapper les accolades pour Python .format()
   judge_prompt: |
-    RÔLE : Moteur de filtrage de sécurité.
+    RÔLE : Expert en anonymisation médicale (RGPD).
     
-    ENTRÉE :
-    1. Texte de référence.
-    2. Liste de "Candidats" (suspicions de données personnelles).
+    TA MISSION : Identifier dans le TEXTE ORIGINAL les éléments de la liste "CANDIDATS" qui sont réellement des données sensibles à masquer (faux positif et faux négatifs possibles).
     
-    TÂCHE :
-    Filtrer la liste des candidats et renvoyer UNIQUEMENT ceux qui sont réellement sensibles et doivent être masqués (REDACT).
-    
-    CRITÈRES DE MASQUAGE (REDACT) :
-    - Noms de personnes réels.
-    - Adresses complètes ou lieux précis (ex: "Hôpital St Louis" -> REDACT, "Paris" -> IGNORER).
-    - Dates de naissance précises (IGNORER les années seules).
-    - Identifiants (SSN, Email, Tel).
-    - CORRECTIONS : Si un candidat coupe une adresse (ex: "Rue X"), renvoie la version complète ("10 Rue X").
-    
-    SORTIE JSON STRICTE :
-    {{
-      "redactions": [
-         {{ "text": "M. Dupont", "type": "PERSON" }},
-         {{ "text": "39 Rue Bobillot", "type": "ADDRESS_FULL" }}
-      ]
-    }}
-    
-    IMPORTANT :
-    - Ne renvoie PAS les candidats à garder (KEEP). Ignore-les simplement.
-    - Si aucun candidat n'est sensible, renvoie {{ "redactions": [] }}.
-    - Pas de blabla, juste le JSON.
+    RÈGLES DE DÉCISION :
+    1. MASQUER : Noms de famille, Prénoms, Adresses complètes, Noms d'hôpitaux précis, Dates de naissance, Dates précises, Téléphone, Noms de Villes.
+    2. IGNORER : Départements, Noms de médicaments, Termes médicaux, Mois et années seules.
+    3. FORMAT : Renvoie une liste brute, un terme par ligne, des termes à MASQUER. Pas de JSON, pas de markdown, pas de tirets.
     
     ---
-    Candidats : {candidate_list_json}
+    EXEMPLE 1 :
+    TEXTE : "M. Dupont Jean est venu à l'Hôpital Nord."
+    CANDIDATS : ["Dr Dupont Jean", "Nord", "Hôpital"]
+    RÉPONSE ATTENDUE :
+    Dupont Jean
+    Hôpital Nord
     
-    Texte : 
-    """{page_text}"""
+    EXEMPLE 2 (Correction) :
+    TEXTE : "Il habite 10 rue de la Paix."
+    CANDIDATS : ["rue de la Paix"]
+    RÉPONSE ATTENDUE :
+    10 rue de la Paix
+    
+    EXEMPLE 3 (Médecin) :
+    TEXTE : "Examen réalisé par le Dr Jean Dupont."
+    RÉPONSE :
+    Jean Dupont
+    Dr Jean Dupont
+    Dupont
+    
+    EXEMPLE 4 (Téléphone) :
+    TEXTE : "09.72.13.01.07"
+    RÉPONSE : 
+    0972130107
+    09.72.13.01.07
+    09 72 13 01 07.
+    
+    ---
+    CAS RÉEL À TRAITER :
+    
+    TEXTE ORIGINAL :
+    {page_text}
+    
+    CANDIDATS à vérifier :
+    {candidates_str}
+    
+    TA LISTE FINALE (Un terme par ligne) :
