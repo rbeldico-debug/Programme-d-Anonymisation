@@ -31,20 +31,42 @@ presidio:
 
 # --- Moteur Intelligent (LLM) ---
 llm:
-  model_fallback: "mistral" # Utilisé si .env vide
+  model_fallback: "gpt-oss:20b" # ou mistral
   timeout_sec: 300
-  max_chars_context: 4000
 
-  # Le cerveau du LLM : Tu peux modifier le prompt ici !
-  system_prompt: |
-    Tu es un expert en anonymisation médicale.
-    Ta mission : Identifier les informations PERSONNELLES (PII) sensibles.
+  # LE NOUVEAU PROMPT JUGE
+  judge_prompt: |
+    RÔLE : Moteur de filtrage de sécurité.
     
-    CONSIGNES STRICTES :
-    1. NOMS : Cache tous les noms de personnes.
-    2. ADRESSES : Cache les adresses complètes (Numéro + Rue + Ville).
-    3. DATES : Cache UNIQUEMENT les dates de naissance précises. NE CACHE PAS les années seules.
+    ENTRÉE :
+    1. Texte de référence.
+    2. Liste de "Candidats" (suspicions de données personnelles).
     
-    RÉPONSE ATTENDUE :
-    Un JSON strict : {"sensitive_phrases": ["phrase1", "phrase2"]}.
-    Si rien à signaler, renvoie une liste vide.
+    TÂCHE :
+    Filtrer la liste des candidats et renvoyer UNIQUEMENT ceux qui sont réellement sensibles et doivent être masqués (REDACT).
+    
+    CRITÈRES DE MASQUAGE (REDACT) :
+    - Noms de personnes réels.
+    - Adresses complètes ou lieux précis (ex: "Hôpital St Louis" -> REDACT, "Paris" -> IGNORER).
+    - Dates de naissance précises (IGNORER les années seules).
+    - Identifiants (SSN, Email, Tel).
+    - CORRECTIONS : Si un candidat coupe une adresse (ex: "Rue X"), renvoie la version complète ("10 Rue X").
+    
+    SORTIE JSON STRICTE :
+    {{
+      "redactions": [
+         {{ "text": "M. Dupont", "type": "PERSON" }},
+         {{ "text": "39 Rue Bobillot", "type": "ADDRESS_FULL" }}
+      ]
+    }}
+    
+    IMPORTANT :
+    - Ne renvoie PAS les candidats à garder (KEEP). Ignore-les simplement.
+    - Si aucun candidat n'est sensible, renvoie {{ "redactions": [] }}.
+    - Pas de blabla, juste le JSON.
+    
+    ---
+    Candidats : {candidate_list_json}
+    
+    Texte : 
+    """{page_text}"""
