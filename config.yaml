@@ -1,0 +1,50 @@
+# --- Configuration Globale ---
+app:
+  debug: false
+  output_dir: "data/output"
+  input_dir: "data/input"
+
+# --- Moteur de Règles (Presidio) ---
+presidio:
+  language: "fr"
+  score_threshold: 0.35
+  # Entités standard à détecter (Spacy + Presidio Built-in)
+  active_entities:
+    - "PERSON"
+    - "LOCATION"
+    - "PHONE_NUMBER"
+    - "EMAIL_ADDRESS"
+    - "FR_SSN"
+    # - "DATE" (Désactivé car géré par le LLM)
+
+  # Règles personnalisées (Regex)
+  custom_rules:
+    - name: "CodePostalFrance"
+      entity_type: "LOCATION"
+      regex: "\\b\\d{5}\\b"
+      score: 0.5
+
+    - name: "VoirieFrance"
+      entity_type: "LOCATION"
+      regex: "(?i)\\b(rue|avenue|av\\.|boulevard|bd|impasse|allée|quai|place|route|chemin)\\s+([a-zA-Z0-9\\s\\-\\']+)"
+      score: 0.6
+
+# --- Moteur Intelligent (LLM) ---
+llm:
+  model_fallback: "mistral" # Utilisé si .env vide
+  timeout_sec: 300
+  max_chars_context: 4000
+
+  # Le cerveau du LLM : Tu peux modifier le prompt ici !
+  system_prompt: |
+    Tu es un expert en anonymisation médicale.
+    Ta mission : Identifier les informations PERSONNELLES (PII) sensibles.
+    
+    CONSIGNES STRICTES :
+    1. NOMS : Cache tous les noms de personnes.
+    2. ADRESSES : Cache les adresses complètes (Numéro + Rue + Ville).
+    3. DATES : Cache UNIQUEMENT les dates de naissance précises. NE CACHE PAS les années seules.
+    
+    RÉPONSE ATTENDUE :
+    Un JSON strict : {"sensitive_phrases": ["phrase1", "phrase2"]}.
+    Si rien à signaler, renvoie une liste vide.

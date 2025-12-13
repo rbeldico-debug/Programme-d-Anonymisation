@@ -1,0 +1,18 @@
+medical_anonymizer/
+│
+├── app/
+│   ├── __init__.py
+│   ├── core/              # Noyau fonctionnel (PDF, Config)
+│   │   ├── __init__.py
+│   │   └── pdf_processor.py
+│   ├── analyzers/         # Les cerveaux (Presidio, LLM) - vide pour l'instant
+│   │   └── __init__.py
+│   └── domain/            # Modèles de données (Classes simples)
+│       └── __init__.py
+│
+├── data/                  # Pour tester
+│   ├── input/
+│   └── output/
+│
+├── main.py                # Point d'entrée
+└── requirements.txt
