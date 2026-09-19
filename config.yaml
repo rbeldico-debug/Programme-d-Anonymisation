@@ -126,11 +126,73 @@ llm:
 
     ---
     CAS RÉEL À TRAITER :
-    
+
     TEXTE ORIGINAL :
     {page_text}
-    
+
     CANDIDATS (amorce incomplète : à vérifier ET à compléter) :
     {candidates_str}
-    
+
     TA LISTE FINALE (Un terme par ligne) :
+
+  # PROMPT MÉTIERS (option --metiers, mode texte seulement) : PAS un masquage, une généralisation.
+  # Politique de hedrox : garder le métier est utile (ce sont souvent des expertises), seuls les
+  # métiers RARES ou rendus identifiants par un lieu/une institution doivent être généralisés.
+  metiers_prompt: |
+    RÔLE : Expert en anonymisation médicale (RGPD), spécialisé sur les MÉTIERS.
+
+    TA MISSION : dans le TEXTE ci-dessous, repère les métiers ou fonctions qui, tels quels,
+    permettraient d'identifier la personne — parce qu'ils sont RARES (peu de gens les exercent)
+    ou rendus identifiants par un LIEU ou une INSTITUTION précise qui les accompagne. Pour
+    chacun, propose une GÉNÉRALISATION qui garde le champ professionnel sans permettre de
+    retrouver la personne.
+
+    NE TOUCHE PAS aux métiers COURANTS, même écrits seuls sans lieu ni institution : retraité,
+    enseignant, infirmière, ouvrier, magasinier, informaticien, secrétaire, agriculteur,
+    commerçant, comptable, gestionnaire, caissière, couturière, dentiste, médecin, avocat,
+    ingénieur (y compris "ingénieur informatique")... La médecine et les professions
+    réglementées classiques sont COURANTES : ne les touche jamais, un métier rare n'est pas
+    un métier qui sonne technique.
+
+    NE TOUCHE JAMAIS un nom de personne ni un titre de civilité (Dr, Pr, M., Mme...) : ce n'est
+    pas ton rôle, un autre outil s'en charge déjà. Si un métier est accolé à un nom (« Dr Untel,
+    cardiologue »), ne rends QUE le métier isolé s'il est rare — jamais le nom ni le titre.
+
+    FORMAT : une ligne par métier à généraliser, exactement :
+    terme exact du texte => généralisation
+    Recopie le terme EXACTEMENT comme il apparaît dans le texte (mêmes mots, même casse), et
+    UNIQUEMENT le métier — jamais un nom propre, jamais une civilité.
+    Si aucun métier ne doit être généralisé, ne réponds RIEN.
+
+    ---
+    EXEMPLE 1 (métier rare) :
+    TEXTE : "Profession : facteur d'orgues, il répare les instruments anciens de la région."
+    RÉPONSE :
+    facteur d'orgues => artisan
+
+    EXEMPLE 2 (métier rendu identifiant par l'institution) :
+    TEXTE : "Elle est sonneuse de carillon à la cathédrale de Toul depuis quinze ans."
+    RÉPONSE :
+    sonneuse de carillon à la cathédrale de Toul => employée d'un lieu de culte
+
+    EXEMPLE 3 (métier courant, même technique : RIEN à faire) :
+    TEXTE : "Il est magasinier dans un entrepôt logistique près de Metz. Monsieur Petit est dentiste en activité."
+    RÉPONSE :
+    (rien)
+
+    EXEMPLE 4 (fonction identifiante par le lieu) :
+    TEXTE : "Son père est maire de Vandœuvre-lès-Nancy depuis 2014."
+    RÉPONSE :
+    maire de Vandœuvre-lès-Nancy => élu local
+
+    EXEMPLE 5 (métier accolé à un nom : ne toucher QUE le métier s'il est rare, et seulement
+    s'il est rare — ici "cardiologue" est courant, donc RIEN à faire) :
+    TEXTE : "Signataire : Dr Vitaly Rajchert, cardiologue."
+    RÉPONSE :
+    (rien)
+
+    ---
+    TEXTE :
+    {page_text}
+
+    TA RÉPONSE (un terme par ligne, "terme exact => généralisation", ou rien) :

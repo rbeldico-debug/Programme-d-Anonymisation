@@ -20,6 +20,7 @@ class LlmAnalyzer:
 
         self.prompt_standard = self.config.get("llm.judge_prompt", "")
         self.prompt_extract = self.config.get("llm.extract_prompt", "")
+        self.prompt_metiers = self.config.get("llm.metiers_prompt", "")
 
         try:
             self.client = Client(host='http://localhost:11434', timeout=self.timeout_val)
@@ -99,3 +100,50 @@ class LlmAnalyzer:
             # On ne rend SURTOUT PAS initial_candidates : sans le LLM, aucun nom n'est masqué.
             # L'erreur remonte, le pipeline marque le fichier FAILED et n'écrit pas de PDF.
             raise LlmIndisponibleError(f"Moteur LLM indisponible ({self.model_name}) : {e}") from e
+
+    def get_metier_generalizations(self, page_text: str, debug: bool = False) -> List[tuple]:
+        """Option --metiers (mode texte) : un second appel, qui ne masque pas mais GÉNÉRALISE
+        les métiers rares ou identifiants. Rend une liste de (terme exact, généralisation).
+        Une panne ici n'est PAS une LlmIndisponibleError : c'est une option, pas le cœur du
+        masquage ; on la journalise et on rend une liste vide (rien de généralisé, rien de perdu
+        côté confidentialité)."""
+        if not page_text.strip() or not self.prompt_metiers.strip():
+            return []
+
+        prompt = self.prompt_metiers.format(page_text=page_text)
+
+        try:
+            response = self.client.chat(
+                model=self.model_name,
+                messages=[{'role': 'user', 'content': prompt}],
+                options={
+                    'temperature': 0.6,
+                    'num_ctx': 16384,
+                    'num_predict': -1,
+                    'stop': []
+                }
+            )
+            raw_content = response['message']['content']
+            clean_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
+
+            if debug:
+                print("\n" + "=" * 20 + " RÉPONSE LLM MÉTIERS " + "=" * 20)
+                print(clean_content)
+                print("=" * 60 + "\n")
+
+            pairs = []
+            for line in clean_content.split('\n'):
+                clean_line = line.strip().lstrip("-").lstrip("*").strip()
+                if "=>" not in clean_line:
+                    continue
+                terme, _, generalisation = clean_line.partition("=>")
+                terme, generalisation = terme.strip(), generalisation.strip()
+                if terme and generalisation:
+                    pairs.append((terme, generalisation))
+
+            print(f"   [LLM] -> {len(pairs)} métier(s) à généraliser.")
+            return pairs
+
+        except Exception as e:
+            print(f"   [LLM Warning] Généralisation des métiers indisponible : {e}")
+            return []

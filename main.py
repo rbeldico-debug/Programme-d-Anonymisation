@@ -20,6 +20,10 @@ def main():
                         help="Mode texte : clé du patient. Les dates complètes sont DÉCALÉES d'un nombre de jours "
                              "constant dérivé de cette clé (même clé = même décalage) au lieu d'être masquées. "
                              "Un dossier = un patient.")
+    parser.add_argument("--metiers", action="store_true",
+                        help="Mode texte : généralise les métiers RARES ou identifiants par un lieu/une "
+                             "institution (ex. « facteur d'orgues » -> « artisan »). Les métiers courants "
+                             "(retraité, enseignant...) ne sont pas touchés. Un second appel LLM par bloc.")
 
     args = parser.parse_args()
 
@@ -31,10 +35,15 @@ def main():
         print("Erreur: --cle-patient n'a de sens qu'avec --texte (un PDF se masque, il ne se réécrit pas).")
         return 2
 
+    if args.metiers and not args.texte:
+        print("Erreur: --metiers n'a de sens qu'avec --texte.")
+        return 2
+
     try:
         shift_days = shift_days_from_key(args.cle_patient) if args.cle_patient else None
         processor = BatchProcessor(args.input, args.output, debug_mode=args.debug,
-                                   text_mode=args.texte, shift_days=shift_days)
+                                   text_mode=args.texte, shift_days=shift_days,
+                                   generalize_metiers=args.metiers)
         failed = processor.run()
         # Code de sortie non nul dès qu'un fichier a échoué : un script appelant doit le voir.
         return 1 if failed else 0

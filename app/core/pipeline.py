@@ -67,6 +67,12 @@ class AnonymizationPipeline:
 
         return secrets
 
+    def _collect_page_metiers(self, page_text: str, debug_mode: bool = False) -> dict:
+        """Option --metiers (mode texte) : demande au LLM les métiers rares ou identifiants à
+        généraliser sur cette page. Rend un dict {terme exact du texte: généralisation}."""
+        pairs = self.llm_analyzer.get_metier_generalizations(page_text, debug=debug_mode)
+        return {terme: generalisation for terme, generalisation in pairs if terme}
+
     def process_file(self, input_path: str, output_path: str, debug_mode: bool = False) -> PipelineResult:
         file_name = os.path.basename(input_path)
 
@@ -146,10 +152,12 @@ class AnonymizationPipeline:
             return PipelineResult(file=file_name, status="FAILED", error=str(e), entities_found=0)
 
     def process_text_file(self, input_path: str, output_path: str, debug_mode: bool = False,
-                          shift_days: int = None) -> PipelineResult:
+                          shift_days: int = None, generalize_metiers: bool = False) -> PipelineResult:
         """
         MODE TEXTE : lit un .txt, écrit un .txt. Les termes sont remplacés par [MASQUÉ].
         Si shift_days est donné, les dates COMPLÈTES sont décalées (format conservé) au lieu d'être masquées.
+        Si generalize_metiers est vrai, un second appel LLM par bloc généralise les métiers rares
+        ou identifiants (ex. « facteur d'orgues » -> « artisan ») AU LIEU de les masquer.
         """
         file_name = os.path.basename(input_path)
 
@@ -161,14 +169,31 @@ class AnonymizationPipeline:
             print(f"   [Pipeline] Analyse de {file_name} ({len(chunks)} blocs)...")
 
             secrets = set()
+            metiers = {}
             for chunk in chunks:
                 if len(chunk.strip()) < 5: continue
                 secrets |= self._collect_page_secrets(chunk, debug_mode)
+                if generalize_metiers:
+                    metiers.update(self._collect_page_metiers(chunk, debug_mode))
 
             if debug_mode:
                 print(f"   [Secrets] {secrets}")
+                if generalize_metiers:
+                    print(f"   [Métiers] {metiers}")
 
-            counter = {"masked": 0, "shifted": 0}
+            counter = {"masked": 0, "shifted": 0, "generalized": 0, "metiers_not_found": 0}
+
+            # Généralisation des métiers : AVANT le masquage, correspondance EXACTE (le terme doit
+            # être recopié tel quel par le LLM). Si introuvable, on ne remplace rien et on le compte
+            # (log) plutôt que de risquer un remplacement partiel ou erroné.
+            if metiers:
+                for terme, generalisation in sorted(metiers.items(), key=lambda kv: len(kv[0]), reverse=True):
+                    if terme in text:
+                        text = text.replace(terme, generalisation)
+                        counter["generalized"] += 1
+                    else:
+                        counter["metiers_not_found"] += 1
+                        print(f"   [Métiers] terme non retrouvé, ignoré : {terme!r}")
 
             def replace(match):
                 if shift_days is not None:
@@ -187,7 +212,8 @@ class AnonymizationPipeline:
 
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(text)
-            print(f"   [TXT] Sauvegarde : {output_path} ({counter['masked']} masques, {counter['shifted']} dates décalées)")
+            print(f"   [TXT] Sauvegarde : {output_path} ({counter['masked']} masques, {counter['shifted']} dates décalées, "
+                  f"{counter['generalized']} métiers généralisés, {counter['metiers_not_found']} introuvables)")
 
             return PipelineResult(file=file_name, status="SUCCESS",
                                   entities_found=counter["masked"] + counter["shifted"])

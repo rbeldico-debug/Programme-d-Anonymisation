@@ -13,12 +13,13 @@ class BatchProcessor:
     """
 
     def __init__(self, input_dir: str, output_dir: str, debug_mode: bool = False,
-                 text_mode: bool = False, shift_days: int = None):
+                 text_mode: bool = False, shift_days: int = None, generalize_metiers: bool = False):
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.debug_mode = debug_mode
         self.text_mode = text_mode
         self.shift_days = shift_days  # mode texte : décalage des dates complètes (None = masquage)
+        self.generalize_metiers = generalize_metiers  # mode texte : généralisation des métiers rares
 
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -45,7 +46,8 @@ class BatchProcessor:
             # Appel Pipeline
             if self.text_mode:
                 result_obj = self.pipeline.process_text_file(in_path, out_path, debug_mode=self.debug_mode,
-                                                             shift_days=self.shift_days)
+                                                             shift_days=self.shift_days,
+                                                             generalize_metiers=self.generalize_metiers)
             else:
                 result_obj = self.pipeline.process_file(in_path, out_path, debug_mode=self.debug_mode)
 
