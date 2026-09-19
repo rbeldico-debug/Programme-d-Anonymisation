@@ -2,7 +2,7 @@ import os
 import re
 from app.core.pdf_processor import PdfProcessor
 from app.analyzers.local_analyzer import LocalAnalyzer
-from app.analyzers.LlmAnalyzer import LlmAnalyzer
+from app.analyzers.LlmAnalyzer import LlmAnalyzer, LlmIndisponibleError
 from app.core.text_mapper import TextMapper
 from app.domain.models import PipelineResult, RedactionDetail, AnonymizationCandidate
 from app.core.filter_engine import FilterEngine
@@ -119,10 +119,24 @@ class AnonymizationPipeline:
                 entities_found=len(all_redaction_zones)
             )
 
+        except LlmIndisponibleError as e:
+            # Panne du moteur : pas de trace Python (ce n'est pas un bug), mais un échec franc.
+            print(f"   [Pipeline] ÉCHEC {file_name} : {e}")
+            self._discard_output(input_path, output_path)
+            return PipelineResult(file=file_name, status="FAILED", error=str(e), entities_found=0)
+
         except Exception as e:
             import traceback
             traceback.print_exc()
+            self._discard_output(input_path, output_path)
             return PipelineResult(file=file_name, status="FAILED", error=str(e), entities_found=0)
+
+    @staticmethod
+    def _discard_output(input_path: str, output_path: str):
+        """Un fichier FAILED ne laisse AUCUN PDF en sortie (même pas celui d'une passe précédente)."""
+        if os.path.abspath(output_path) != os.path.abspath(input_path) and os.path.exists(output_path):
+            os.remove(output_path)
+            print(f"   [Pipeline] Ancienne sortie supprimée : {output_path}")
 
     def _generate_candidates_from_user_lists(self, text: str) -> list[AnonymizationCandidate]:
         """Trouve les occurrences des listes utilisateur dans le texte."""

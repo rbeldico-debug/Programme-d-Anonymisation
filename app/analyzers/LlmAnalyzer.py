@@ -5,6 +5,10 @@ from ollama import Client
 from app.core.config_loader import ConfigLoader
 
 
+class LlmIndisponibleError(RuntimeError):
+    """Le moteur LLM n'a pas répondu : le document ne doit PAS sortir comme anonymisé."""
+
+
 class LlmAnalyzer:
     def __init__(self):
         self.config = ConfigLoader()
@@ -90,4 +94,6 @@ class LlmAnalyzer:
             print(f"   [LLM Error] {e}")
             if "Read timed out" in str(e):
                 print("   [Conseil] Augmentez 'timeout_sec' dans config.yaml ou utilisez un modèle plus rapide.")
-            return initial_candidates
+            # On ne rend SURTOUT PAS initial_candidates : sans le LLM, aucun nom n'est masqué.
+            # L'erreur remonte, le pipeline marque le fichier FAILED et n'écrit pas de PDF.
+            raise LlmIndisponibleError(f"Moteur LLM indisponible ({self.model_name}) : {e}") from e

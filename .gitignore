@@ -5,3 +5,5 @@
 .env
 /data
 /Sauvegarde PDF
+# Python
+__pycache__/

@@ -22,12 +22,13 @@ class BatchProcessor:
 
         self.pipeline = AnonymizationPipeline()
 
-    def run(self):
+    def run(self) -> int:
+        """Traite le dossier. Retourne le nombre de fichiers en échec."""
         files = [f for f in os.listdir(self.input_dir) if f.lower().endswith(".pdf")]
 
         if not files:
             print("Aucun fichier PDF trouvé.")
-            return
+            return 0
 
         print(f"--- Batch : {len(files)} fichiers (Debug={self.debug_mode}) ---")
 
@@ -50,7 +51,15 @@ class BatchProcessor:
             report_data.append(res_dict)
 
         self._save_report(report_data)
-        print("\n--- Terminé ---")
+
+        failed = [r["file"] for r in report_data if r["status"] != "SUCCESS"]
+        if failed:
+            print(f"\n--- Terminé AVEC {len(failed)} ÉCHEC(S) sur {len(files)} : aucun PDF écrit pour ---")
+            for name in failed:
+                print(f"   - {name}")
+        else:
+            print("\n--- Terminé ---")
+        return len(failed)
 
     def _save_report(self, data: List[dict]):
         report_path = os.path.join(self.output_dir, "_batch_report.csv")
