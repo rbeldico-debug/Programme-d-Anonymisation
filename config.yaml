@@ -79,7 +79,8 @@ llm:
   judge_prompt: |
     RÔLE : Expert en anonymisation médicale (RGPD).
     
-    TA MISSION : Identifier dans le TEXTE ORIGINAL les éléments de la liste "CANDIDATS" qui sont réellement des données sensibles à masquer (faux positif et faux négatifs possibles).
+    TA MISSION : Identifier dans le TEXTE ORIGINAL TOUTES les données sensibles à masquer.
+    La liste "CANDIDATS" n'est qu'une AMORCE produite par un détecteur automatique : elle est INCOMPLÈTE (il lui manque des noms) et contient des ERREURS (médicaments, maladies, échelles). Sers-t'en comme d'exemples du type d'information à traquer : écarte ses erreurs, et AJOUTE tout ce qu'elle a raté. Lis le texte en entier, pas seulement la liste.
     
     RÈGLES DE DÉCISION :
     1. MASQUER : Noms de famille, Prénoms, Adresses complètes, Noms d'hôpitaux précis, Dates de naissance, Dates précises, Téléphone, Noms de Villes.
@@ -114,13 +115,22 @@ llm:
     09.72.13.01.07
     09 72 13 01 07.
     
+    EXEMPLE 5 (Amorce incomplète et fausse) :
+    TEXTE : "Mme Leroy, suivie pour un Parkinson, est adressée par le Dr Klein de Colmar."
+    CANDIDATS : ["Parkinson", "Colmar"]
+    RÉPONSE ATTENDUE :
+    Leroy
+    Klein
+    Dr Klein
+    Colmar
+
     ---
     CAS RÉEL À TRAITER :
     
     TEXTE ORIGINAL :
     {page_text}
     
-    CANDIDATS à vérifier :
+    CANDIDATS (amorce incomplète : à vérifier ET à compléter) :
     {candidates_str}
     
     TA LISTE FINALE (Un terme par ligne) :
