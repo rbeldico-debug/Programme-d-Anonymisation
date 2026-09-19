@@ -31,23 +31,29 @@ class AnonymizationPipeline:
 
         for res in presidio_results:
             entity_type = res['type']
-            text_slice = res['text_slice']
+            clean_slice = res['text_slice'].strip()
+
+            # LISTE BLANCHE : jamais masqué, même une date ou un téléphone repéré par regex,
+            # même comme amorce donnée au LLM. Comparaison insensible à la casse (la liste est
+            # chargée en minuscules).
+            if clean_slice.lower() in self.filter_engine.whitelist:
+                continue
 
             # LISTE ÉLARGIE DES TYPES "INDISCUTABLES"
             if entity_type in ["PHONE_NUMBER", "EMAIL_ADDRESS", "FR_SSN", "DATE_TIME", "DATE"]:
 
                 # Vérification anti-bruit pour les dates : jamais une année seule ("2024").
                 # (L'ancien filtre « moins de 6 caractères sans "/" » jetait aussi « 3 mai ».)
-                if entity_type in ["DATE_TIME", "DATE"] and text_slice.strip().isdigit():
+                if entity_type in ["DATE_TIME", "DATE"] and clean_slice.isdigit():
                     continue
 
-                secrets.add(text_slice.strip())
+                secrets.add(clean_slice)
 
             # L'AMORCE : noms et lieux vus par Presidio/spaCy. Ce ne sont PAS des masquages d'office
             # (spaCy prend « Parkinson » ou « trazodone » pour des personnes) : ce sont des exemples
             # donnés au LLM, qui tranche — et qui peut trouver ce que l'amorce a raté.
             elif entity_type in ["PERSON", "LOCATION", "NRP"]:
-                soft_candidates_for_llm.add(text_slice.strip())
+                soft_candidates_for_llm.add(clean_slice)
 
         # B. Validation LLM (Seulement pour les cas ambigus : Noms, Adresses)
         list_candidates = list(soft_candidates_for_llm)
@@ -97,6 +103,9 @@ class AnonymizationPipeline:
 
                 global_secrets_to_hide |= self._collect_page_secrets(page_text, debug_mode)
 
+            # LISTE NOIRE : toujours masquée, ajoutée à la liste globale AVANT la passe 2.
+            global_secrets_to_hide |= self.filter_engine.blacklist
+
             print(
                 f"   [Pipeline] Analyse terminée. {len(global_secrets_to_hide)} termes uniques identifiés pour suppression globale.")
             if debug_mode:
@@ -113,10 +122,13 @@ class AnonymizationPipeline:
                 # On cherche CHAQUE secret global dans CETTE page
                 for secret in global_secrets_to_hide:
                     # Recherche insensible à la casse pour maximiser la sécurité
-                    # Utilisation de \b boundary seulement si le secret est un mot entier pour éviter de masquer "ass" dans "passer" ?
-                    # Pour l'instant, recherche simple (plus sûr pour les adresses)
+                    # Frontière de mot \b UNIQUEMENT pour la liste noire (évite qu'un terme court
+                    # morde dans un mot plus long) ; sans elle pour le reste, comme avant (plus
+                    # sûr pour les adresses, qui ne sont pas toujours entre deux frontières nettes).
+                    is_blacklisted = secret.strip().lower() in self.filter_engine.blacklist
+                    pattern = (r'\b' + re.escape(secret) + r'\b') if is_blacklisted else re.escape(secret)
                     try:
-                        for match in re.finditer(re.escape(secret), page_text, re.IGNORECASE):
+                        for match in re.finditer(pattern, page_text, re.IGNORECASE):
                             fake_entity = {
                                 "start": match.start(),
                                 "end": match.end(),
@@ -176,6 +188,9 @@ class AnonymizationPipeline:
                 if generalize_metiers:
                     metiers.update(self._collect_page_metiers(chunk, debug_mode))
 
+            # LISTE NOIRE : toujours masquée, ajoutée à la liste globale AVANT le remplacement.
+            secrets |= self.filter_engine.blacklist
+
             if debug_mode:
                 print(f"   [Secrets] {secrets}")
                 if generalize_metiers:
@@ -205,9 +220,16 @@ class AnonymizationPipeline:
                 return TEXT_MASK
 
             if secrets:
-                # UNE seule passe, termes les plus longs d'abord : un remplacement n'est jamais re-remplacé
+                # UNE seule passe, termes les plus longs d'abord : un remplacement n'est jamais re-remplacé.
+                # Frontière de mot \b pour les termes de la liste noire seulement (cf. process_file).
                 ordered = sorted(secrets, key=len, reverse=True)
-                pattern = re.compile("|".join(re.escape(term) for term in ordered), re.IGNORECASE)
+                parts = []
+                for term in ordered:
+                    escaped = re.escape(term)
+                    if term.strip().lower() in self.filter_engine.blacklist:
+                        escaped = r'\b' + escaped + r'\b'
+                    parts.append(escaped)
+                pattern = re.compile("|".join(parts), re.IGNORECASE)
                 text = pattern.sub(replace, text)
 
             with open(output_path, 'w', encoding='utf-8') as f:

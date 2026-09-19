@@ -8,7 +8,12 @@ class FilterEngine:
     Gère les listes blanches (Allowlist) et noires (Blocklist) définies par l'utilisateur.
     """
 
-    def __init__(self, dict_dir: str = "data/dictionaries"):
+    def __init__(self, dict_dir: str = None):
+        # Dossier configurable par ANONYMIZER_DICT_DIR : la liste noire est une donnée SENSIBLE,
+        # destinée à vivre hors de ce dépôt (compte Linux séparé). Sans la variable, comportement
+        # inchangé : "data/dictionaries".
+        if dict_dir is None:
+            dict_dir = os.environ.get("ANONYMIZER_DICT_DIR", "data/dictionaries")
         self.whitelist: Set[str] = set()
         self.blacklist: Set[str] = set()
 
