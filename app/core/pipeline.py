@@ -43,6 +43,12 @@ class AnonymizationPipeline:
 
                 secrets.add(text_slice.strip())
 
+            # L'AMORCE : noms et lieux vus par Presidio/spaCy. Ce ne sont PAS des masquages d'office
+            # (spaCy prend « Parkinson » ou « trazodone » pour des personnes) : ce sont des exemples
+            # donnés au LLM, qui tranche — et qui peut trouver ce que l'amorce a raté.
+            elif entity_type in ["PERSON", "LOCATION", "NRP"]:
+                soft_candidates_for_llm.add(text_slice.strip())
+
         # B. Validation LLM (Seulement pour les cas ambigus : Noms, Adresses)
         list_candidates = list(soft_candidates_for_llm)
 

@@ -35,7 +35,9 @@ class LlmAnalyzer:
 
         # Stratégie de bascule (densité)
         limit_high_density = 40
-        if count_candidates > limit_high_density:
+        # La bascule n'a de sens que si extract_prompt existe dans config.yaml : sinon l'invite
+        # envoyée serait VIDE (c'est le cas aujourd'hui), sans aucune erreur.
+        if count_candidates > limit_high_density and self.prompt_extract.strip():
             if debug: print(f"   [LLM] Mode EXTRACTION (Densité: {count_candidates})")
             prompt = self.prompt_extract.format(page_text=page_text)
         else:
