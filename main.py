@@ -3,6 +3,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from app.core.batch_processor import BatchProcessor
+from app.core.date_shifter import shift_days_from_key
 
 load_dotenv()
 
@@ -13,6 +14,12 @@ def main():
     parser.add_argument("--input", "-i", default="data/input", help="Dossier entrée")
     parser.add_argument("--output", "-o", default="data/output", help="Dossier sortie")
     parser.add_argument("--debug", action="store_true", help="Mode Debug (visuel)")
+    parser.add_argument("--texte", action="store_true",
+                        help="Mode texte : lit des .txt, écrit des .txt (termes remplacés par [MASQUÉ])")
+    parser.add_argument("--cle-patient", default=None,
+                        help="Mode texte : clé du patient. Les dates complètes sont DÉCALÉES d'un nombre de jours "
+                             "constant dérivé de cette clé (même clé = même décalage) au lieu d'être masquées. "
+                             "Un dossier = un patient.")
 
     args = parser.parse_args()
 
@@ -20,8 +27,14 @@ def main():
         print(f"Erreur: Dossier {args.input} introuvable.")
         return 2
 
+    if args.cle_patient and not args.texte:
+        print("Erreur: --cle-patient n'a de sens qu'avec --texte (un PDF se masque, il ne se réécrit pas).")
+        return 2
+
     try:
-        processor = BatchProcessor(args.input, args.output, debug_mode=args.debug)
+        shift_days = shift_days_from_key(args.cle_patient) if args.cle_patient else None
+        processor = BatchProcessor(args.input, args.output, debug_mode=args.debug,
+                                   text_mode=args.texte, shift_days=shift_days)
         failed = processor.run()
         # Code de sortie non nul dès qu'un fichier a échoué : un script appelant doit le voir.
         return 1 if failed else 0

@@ -9,13 +9,16 @@ from app.domain.models import PipelineResult
 
 class BatchProcessor:
     """
-    Gère le traitement d'un dossier complet de PDF.
+    Gère le traitement d'un dossier complet de PDF (ou de .txt en mode texte).
     """
 
-    def __init__(self, input_dir: str, output_dir: str, debug_mode: bool = False):
+    def __init__(self, input_dir: str, output_dir: str, debug_mode: bool = False,
+                 text_mode: bool = False, shift_days: int = None):
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.debug_mode = debug_mode
+        self.text_mode = text_mode
+        self.shift_days = shift_days  # mode texte : décalage des dates complètes (None = masquage)
 
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -24,10 +27,11 @@ class BatchProcessor:
 
     def run(self) -> int:
         """Traite le dossier. Retourne le nombre de fichiers en échec."""
-        files = [f for f in os.listdir(self.input_dir) if f.lower().endswith(".pdf")]
+        extension = ".txt" if self.text_mode else ".pdf"
+        files = sorted(f for f in os.listdir(self.input_dir) if f.lower().endswith(extension))
 
         if not files:
-            print("Aucun fichier PDF trouvé.")
+            print(f"Aucun fichier {extension} trouvé.")
             return 0
 
         print(f"--- Batch : {len(files)} fichiers (Debug={self.debug_mode}) ---")
@@ -39,7 +43,11 @@ class BatchProcessor:
             out_path = os.path.join(self.output_dir, filename)
 
             # Appel Pipeline
-            result_obj = self.pipeline.process_file(in_path, out_path, debug_mode=self.debug_mode)
+            if self.text_mode:
+                result_obj = self.pipeline.process_text_file(in_path, out_path, debug_mode=self.debug_mode,
+                                                             shift_days=self.shift_days)
+            else:
+                result_obj = self.pipeline.process_file(in_path, out_path, debug_mode=self.debug_mode)
 
             # Sauvegarde audit individuel (si succès)
             if result_obj.status == "SUCCESS" and result_obj.details:

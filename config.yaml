@@ -27,11 +27,32 @@ presidio:
       regex: "(?:(?:\\+|00)33|0)\\s*[1-9](?:[\\s.-]*\\d{2}){4}"
       score: 1.0
 
-    # 2. Regex Date de Naissance (JJ/MM/AAAA)
-    - name: "DateNaissance"
-      entity_type: "DATE_TIME"
-      # Capture 28/07/1965 ou 28-07-1965
-      regex: "\\b([0-2][0-9]|3[0-1])\\/(0[1-9]|1[0-2])\\/(\\d{4})\\b"
+    # 2. Dates — masquées d'office, AVANT le LLM.
+    #    ATTENTION : entity_type doit être "DATE", comme dans active_entities. L'ancienne règle
+    #    déclarait "DATE_TIME" : Presidio ne la sortait jamais, toutes les dates reposaient sur le LLM.
+    #    (Ne pas activer "DATE_TIME" : ce serait le NER de spaCy, qui masque « 2024 », « 3 semaines »...)
+    #    POLITIQUE : années seules (« 2017 ») et mois + année (« mars 2024 », « 05/2025 ») NE sont PAS masqués.
+
+    # 2a. Date complète : 28/07/1965, 28-07-1965, 28.07.1965, 5/02/25 (même séparateur des deux côtés).
+    #     Jour 1-31, mois 1-12. Les bornes évitent de mordre dans un téléphone (01.02.03.04.05).
+    - name: "DateComplete"
+      entity_type: "DATE"
+      regex: "(?<![\\d/.-])(?:0?[1-9]|[12]\\d|3[01])([/.-])(?:0?[1-9]|1[0-2])\\1(?:(?:19|20)\\d{2}|\\d{2})(?!\\d|[/.-]\\d)"
+      score: 1.0
+
+    # 2b. Date sans année : 13/05, 2/06. Le mois doit avoir DEUX chiffres : écarte « TA 12/8 », « 3/4 », « 1/2 ».
+    #     Écarte aussi les scores (« EN 8/10 », « EVA 3/10 », « cotée à 18/30 ») et les doses (« 20/10 mg »).
+    #     Limite connue : « Liptruzet 20/10 » sans unité passe pour un 20 octobre.
+    - name: "DateSansAnnee"
+      entity_type: "DATE"
+      regex: "(?<![\\d/.,-])(?<!\\bEN )(?<!EVA )(?<!à )(?:0?[1-9]|[12]\\d|3[01])/(?:0[1-9]|1[0-2])(?![\\d/]|[.,]\\d|\\s?(?:mg|µg|mmHg|ml|%))"
+      score: 0.8
+
+    # 2c. Date en lettres : « 12 mars 2024 », « 1er avril », « du 3 au 6 mars ». Un JOUR est exigé :
+    #     « mars 2024 » seul ne correspond pas (politique ci-dessus).
+    - name: "DateEnLettres"
+      entity_type: "DATE"
+      regex: "(?<![\\d/])(?:(?:1er|\\d{1,2})\\s+au\\s+)?(?:1er|0?[1-9]|[12]\\d|3[01])\\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)(?:\\s+(?:19|20)\\d{2})?\\b"
       score: 1.0
 
     # 3. Regex Codes Postaux
