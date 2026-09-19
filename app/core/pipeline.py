@@ -208,7 +208,10 @@ class AnonymizationPipeline:
                         counter["generalized"] += 1
                     else:
                         counter["metiers_not_found"] += 1
-                        print(f"   [Métiers] terme non retrouvé, ignoré : {terme!r}")
+                        # Le terme lui-même est une donnée potentiellement identifiante (un métier
+                        # RARE) : on ne l'imprime qu'en mode debug, jamais sur la console par défaut.
+                        if debug_mode:
+                            print(f"   [Métiers] terme non retrouvé, ignoré : {terme!r}")
 
             def replace(match):
                 if shift_days is not None:
