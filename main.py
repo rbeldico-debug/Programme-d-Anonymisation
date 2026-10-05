@@ -16,7 +16,8 @@ def main():
     parser.add_argument("--output", "-o", default="data/output", help="Dossier sortie")
     parser.add_argument("--debug", action="store_true", help="Mode Debug (visuel)")
     parser.add_argument("--texte", action="store_true",
-                        help="Mode texte : lit des .txt, écrit des .txt (termes remplacés par [MASQUÉ])")
+                        help="Mode texte : lit des .txt et des .md, écrit le même nom et la même extension "
+                             "(termes remplacés par [MASQUÉ])")
     parser.add_argument("--cle-patient", default=None,
                         help="Mode texte : clé du patient. Les dates complètes sont DÉCALÉES d'un nombre de jours "
                              "constant dérivé de cette clé (même clé = même décalage) au lieu d'être masquées. "

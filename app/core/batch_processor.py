@@ -7,9 +7,20 @@ from app.core.pipeline import AnonymizationPipeline
 from app.domain.models import PipelineResult
 
 
+# Mode texte : .txt et .md (même traitement ; la sortie garde le nom ET l'extension de l'entrée).
+EXTENSIONS_TEXTE = (".txt", ".md")
+
+
+def lister_entrees(input_dir: str, text_mode: bool) -> List[str]:
+    """Les fichiers à traiter dans input_dir, triés : .txt/.md en mode texte, .pdf sinon."""
+    extensions = EXTENSIONS_TEXTE if text_mode else (".pdf",)
+    return sorted(f for f in os.listdir(input_dir)
+                  if f.lower().endswith(extensions) and os.path.isfile(os.path.join(input_dir, f)))
+
+
 class BatchProcessor:
     """
-    Gère le traitement d'un dossier complet de PDF (ou de .txt en mode texte).
+    Gère le traitement d'un dossier complet de PDF (ou de .txt/.md en mode texte).
     """
 
     def __init__(self, input_dir: str, output_dir: str, debug_mode: bool = False,
@@ -28,11 +39,10 @@ class BatchProcessor:
 
     def run(self) -> int:
         """Traite le dossier. Retourne le nombre de fichiers en échec."""
-        extension = ".txt" if self.text_mode else ".pdf"
-        files = sorted(f for f in os.listdir(self.input_dir) if f.lower().endswith(extension))
+        files = lister_entrees(self.input_dir, self.text_mode)
 
         if not files:
-            print(f"Aucun fichier {extension} trouvé.")
+            print(f"Aucun fichier {'.txt/.md' if self.text_mode else '.pdf'} trouvé.")
             return 0
 
         print(f"--- Batch : {len(files)} fichiers (Debug={self.debug_mode}) ---")
@@ -62,11 +72,12 @@ class BatchProcessor:
 
         self._save_report(report_data)
 
-        failed = [r["file"] for r in report_data if r["status"] != "SUCCESS"]
+        failed = [r for r in report_data if r["status"] != "SUCCESS"]
         if failed:
-            print(f"\n--- Terminé AVEC {len(failed)} ÉCHEC(S) sur {len(files)} : aucun PDF écrit pour ---")
-            for name in failed:
-                print(f"   - {name}")
+            print(f"\n--- Terminé AVEC {len(failed)} fichier(s) NON ANONYMISÉ(S) sur {len(files)} : "
+                  f"aucune sortie écrite pour ---")
+            for r in failed:
+                print(f"   - {r['file']} [{r['status']}] {r.get('error') or ''}")
         else:
             print("\n--- Terminé ---")
         return len(failed)

@@ -28,6 +28,23 @@ class PdfProcessor:
                 extracted_data.append(word_data)
         return extracted_data
 
+    def pages_image_sans_texte(self) -> List[int]:
+        """Pages (numérotées depuis 0) qu'on ne sait PAS anonymiser faute de texte : une image et
+        moins de 5 mots, ou une image couvrant au moins la moitié de la page et moins de 30 mots
+        (un scan avec un en-tête de fax, un tampon). Leur contenu est dans les pixels : sans OCR,
+        rien n'y serait masqué, et le PDF sortirait recopié tel quel comme « anonymisé »."""
+        pages = []
+        for num, page in enumerate(self.doc):
+            mots = len(page.get_text("words"))
+            images = page.get_image_info()
+            if not images:
+                continue
+            aire = abs(page.rect) or 1.0
+            couverture = max(abs(fitz.Rect(i["bbox"]) & page.rect) / aire for i in images)
+            if mots < 5 or (couverture >= 0.5 and mots < 30):
+                pages.append(num)
+        return pages
+
     def apply_redactions(self, redaction_zones: List[Dict[str, Any]], output_path: str, debug_mode: bool = False):
         """
         Applique les masques ou le mode debug.

@@ -85,6 +85,18 @@ class AnonymizationPipeline:
         try:
             # 1. Extraction Initiale
             pdf_proc = PdfProcessor(input_path)
+
+            # 0. Un scan (image sans texte) ne se masque pas sans OCR : le SIGNALER, ne rien écrire.
+            # Avant : 0 terme, PDF recopié tel quel, statut SUCCESS — un document « anonymisé » intact.
+            pages_image = pdf_proc.pages_image_sans_texte()
+            if pages_image:
+                pdf_proc.close()
+                motif = ("image sans texte : OCR nécessaire (page(s) "
+                         + ", ".join(str(p + 1) for p in pages_image) + ")")
+                print(f"   [Pipeline] NON TRAITÉ {file_name} : {motif}")
+                self._discard_output(input_path, output_path)
+                return PipelineResult(file=file_name, status="NON_TRAITE", error=motif, entities_found=0)
+
             pdf_words = pdf_proc.get_text_and_coordinates()
             mapper = TextMapper(pdf_words)
             num_pages = mapper.get_total_pages()
@@ -166,7 +178,7 @@ class AnonymizationPipeline:
     def process_text_file(self, input_path: str, output_path: str, debug_mode: bool = False,
                           shift_days: int = None, generalize_metiers: bool = False) -> PipelineResult:
         """
-        MODE TEXTE : lit un .txt, écrit un .txt. Les termes sont remplacés par [MASQUÉ].
+        MODE TEXTE : lit un .txt ou un .md, écrit le même nom (même extension). Les termes sont remplacés par [MASQUÉ].
         Si shift_days est donné, les dates COMPLÈTES sont décalées (format conservé) au lieu d'être masquées.
         Si generalize_metiers est vrai, un second appel LLM par bloc généralise les métiers rares
         ou identifiants (ex. « facteur d'orgues » -> « artisan ») AU LIEU de les masquer.
