@@ -73,6 +73,18 @@ presidio:
 llm:
   model_fallback: "gpt-oss:20b"
   timeout_sec: 300
+  # Température de l'appel (celle d'origine). Une réponse tronquée est retentée UNE fois à 0.
+  temperature: 0.6
+  # Plafond de longueur PAR RÉPONSE, en jetons. Avant : -1 (infini) — une pensée ou une boucle de
+  # répétition tournait jusqu'au bout du contexte (constat du 05/10/2026 : 3 000 à 4 096 jetons,
+  # 2 min 15 à 2 min 25 par appel, contenu VIDE, 0 terme, nom en clair). Mesuré sur Gemma 4 12B
+  # sans pensée : une réponse légitime fait 13 à 196 jetons sur 8 documents synthétiques, et 440
+  # sur un bloc de 3 000 caractères saturé de noms (30 personnes, 67 identifiants) — soit ~590
+  # extrapolés au bloc maximal de 4 000 caractères. 1024 laisse ~1,7 fois cette marge et borne un
+  # appel fou à ~45 s (à ~22 jetons/s au bureau). Si une réponse bute dessus : nouvel essai à
+  # température 0, puis échec franc du document (jamais une liste partielle). Une page plus dense
+  # encore qui échouerait ainsi se règle en montant cette valeur, pas en la retirant.
+  num_predict: 1024
 
   # NOUVEAU PROMPT : Stratégie Few-Shot (Liste simple)
   # Les accolades doubles {{ }} servent à échapper les accolades pour Python .format()
