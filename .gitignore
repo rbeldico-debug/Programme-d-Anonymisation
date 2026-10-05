@@ -7,3 +7,6 @@
 /Sauvegarde PDF
 # Python
 __pycache__/
+
+# Journal du relais (comptes seulement, mais local à chaque poste)
+outils/journal-relais.jsonl
