@@ -4,6 +4,7 @@ import sys
 from dotenv import load_dotenv
 from app.core.batch_processor import BatchProcessor
 from app.core.date_shifter import shift_days_from_key
+from app.core.garde_lieu import verifier_lieu
 
 load_dotenv()
 
@@ -29,6 +30,14 @@ def main():
 
     if not os.path.exists(args.input):
         print(f"Erreur: Dossier {args.input} introuvable.")
+        return 2
+
+    # Avant de lire quoi que ce soit : les documents ne quittent jamais le disque local (app/core/garde_lieu.py).
+    try:
+        verifier_lieu(args.input, "d'entrée")
+        verifier_lieu(args.output, "de sortie")
+    except RuntimeError as e:
+        print(f"Erreur: {e}")
         return 2
 
     if args.cle_patient and not args.texte:
