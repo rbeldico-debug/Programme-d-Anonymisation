@@ -2,6 +2,7 @@ from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from typing import List, Dict
 from app.core.config_loader import ConfigLoader  # <--- Import
+from app.analyzers import regles_fr
 
 
 class LocalAnalyzer:
@@ -25,6 +26,13 @@ class LocalAnalyzer:
 
         # 2. Chargement Dynamique des Règles Regex
         self._load_custom_rules()
+
+        # 3. Règles françaises en Python (app/analyzers/regles_fr.py) : NIR, RPPS/ADELI, dates en
+        #    toutes lettres, voies Unicode, et le courriel SANS RÉSEAU (le reconnaisseur d'origine
+        #    passe par tldextract, qui télécharge la liste publicsuffix si son cache est vide).
+        self.analyzer.registry.remove_recognizer("EmailRecognizer")
+        for reco in regles_fr.reconnaisseurs(self.language):
+            self.analyzer.registry.add_recognizer(reco)
 
     def _load_custom_rules(self):
         """Lit les règles custom depuis config.yaml et les injecte."""

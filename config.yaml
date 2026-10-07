@@ -14,7 +14,8 @@ presidio:
     - "LOCATION"
     - "PHONE_NUMBER"
     - "EMAIL_ADDRESS"
-    - "FR_SSN"
+    - "FR_SSN"     # NIR : app/analyzers/regles_fr.py (Presidio n'a AUCUN reconnaisseur français)
+    - "FR_RPPS"    # RPPS / ADELI : idem
     - "DATE"
     - "NRP"
 
@@ -24,7 +25,8 @@ presidio:
     - name: "TelFrance"
       entity_type: "PHONE_NUMBER"
       # Capture 01.02.03.04.05 ou 01 02 03 04 05 ou +33 1...
-      regex: "(?:(?:\\+|00)33|0)\\s*[1-9](?:[\\s.-]*\\d{2}){4}"
+      # (?<!\d) : sans elle, « 0936403114 » était pris DANS le code CIP 3400936403114 (contre-épreuve 07/10)
+      regex: "(?<![\\d+])(?:(?:\\+|00)33|0)\\s*[1-9](?:[\\s.-]*\\d{2}){4}"
       score: 1.0
 
     # 2. Dates — masquées d'office, AVANT le LLM.
@@ -61,11 +63,15 @@ presidio:
       regex: "\\b\\d{5}\\b"
       score: 0.5
 
-    # 4. Regex Rues classiques
-    - name: "VoirieFrance"
-      entity_type: "LOCATION"
-      regex: "(?i)\\b(rue|avenue|av\\.|boulevard|bd|impasse|allée|quai|place|route|chemin)\\s+([a-zA-Z0-9\\s\\-\\']+)"
-      score: 0.6
+    # 4. Les voies (« rue », « chemin »…) sont dans app/analyzers/regles_fr.py (RecoVoie) : l'ancienne
+    #    « VoirieFrance » ne connaissait que l'ASCII (« Grève-Haute » -> « [MASQUÉ]ève-Haute ») et
+    #    traversait les fins de ligne. Même chose pour NIR, RPPS, dates en toutes lettres, courriel.
+
+  # Éponymes médicaux (« échelle de Hamilton », « maladie de Parkinson ») : écartés de l'AMORCE donnée
+  # au LLM, occurrence par occurrence, seulement dans leur contexte médical. « M. Hamilton » reste un
+  # candidat ; un nom retenu ailleurs est masqué partout. Le LLM lit toujours le texte entier.
+  # false = comportement d'avant (en attendant la décision de hedrox).
+  eponymes_en_contexte: false
 
 # --- Moteur Intelligent (LLM) ---
 # ... (début du fichier inchangé)

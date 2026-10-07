@@ -9,6 +9,7 @@ from app.core.filter_engine import FilterEngine
 from app.core.date_shifter import shift_date_text
 from app.core.config_loader import ConfigLoader
 from app.core import noms_composes
+from app.analyzers.regles_fr import eponyme_en_contexte
 
 TEXT_MASK = "[MASQUÉ]"
 
@@ -23,7 +24,11 @@ class AnonymizationPipeline:
         # voir app/core/noms_composes.py. "aucun" = chaîne exacte seulement, comme avant.
         self.niveau_noms = str(ConfigLoader().get("masquage.noms_composes", "aucun"))
         noms_composes.deriver([], self.niveau_noms)  # niveau inconnu -> erreur AU DÉMARRAGE, pas en cours de lot
-        print(f"   [Pipeline] Prêt (noms composés : {self.niveau_noms}).")
+        # Éponymes médicaux (« échelle de Hamilton ») écartés de l'amorce, occurrence par occurrence :
+        # voir regles_fr.eponyme_en_contexte. False = comportement d'avant.
+        self.eponymes_en_contexte = bool(ConfigLoader().get("presidio.eponymes_en_contexte", False))
+        print(f"   [Pipeline] Prêt (noms composés : {self.niveau_noms} ; "
+              f"éponymes en contexte écartés : {'oui' if self.eponymes_en_contexte else 'non'}).")
 
     def _collect_page_secrets(self, page_text: str, debug_mode: bool = False) -> set:
         """PASSE 1 sur une page : regex d'office puis LLM. Commun aux modes PDF et texte."""
@@ -46,7 +51,7 @@ class AnonymizationPipeline:
                 continue
 
             # LISTE ÉLARGIE DES TYPES "INDISCUTABLES"
-            if entity_type in ["PHONE_NUMBER", "EMAIL_ADDRESS", "FR_SSN", "DATE_TIME", "DATE"]:
+            if entity_type in ["PHONE_NUMBER", "EMAIL_ADDRESS", "FR_SSN", "FR_RPPS", "DATE_TIME", "DATE"]:
 
                 # Vérification anti-bruit pour les dates : jamais une année seule ("2024").
                 # (L'ancien filtre « moins de 6 caractères sans "/" » jetait aussi « 3 mai ».)
@@ -59,6 +64,8 @@ class AnonymizationPipeline:
             # (spaCy prend « Parkinson » ou « trazodone » pour des personnes) : ce sont des exemples
             # donnés au LLM, qui tranche — et qui peut trouver ce que l'amorce a raté.
             elif entity_type in ["PERSON", "LOCATION", "NRP"]:
+                if self.eponymes_en_contexte and eponyme_en_contexte(page_text, res['start'], res['end']):
+                    continue
                 soft_candidates_for_llm.add(clean_slice)
 
         # B. Validation LLM (Seulement pour les cas ambigus : Noms, Adresses)
