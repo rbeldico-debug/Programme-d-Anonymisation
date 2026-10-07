@@ -7,6 +7,8 @@ from app.core.text_mapper import TextMapper
 from app.domain.models import PipelineResult, RedactionDetail, AnonymizationCandidate
 from app.core.filter_engine import FilterEngine
 from app.core.date_shifter import shift_date_text
+from app.core.config_loader import ConfigLoader
+from app.core import noms_composes
 
 TEXT_MASK = "[MASQUÉ]"
 
@@ -17,7 +19,11 @@ class AnonymizationPipeline:
         self.local_analyzer = LocalAnalyzer()
         self.llm_analyzer = LlmAnalyzer()
         self.filter_engine = FilterEngine()
-        print("   [Pipeline] Prêt.")
+        # Variantes des noms rendus par le LLM (forme sans civilité, parties d'un nom composé) :
+        # voir app/core/noms_composes.py. "aucun" = chaîne exacte seulement, comme avant.
+        self.niveau_noms = str(ConfigLoader().get("masquage.noms_composes", "aucun"))
+        noms_composes.deriver([], self.niveau_noms)  # niveau inconnu -> erreur AU DÉMARRAGE, pas en cours de lot
+        print(f"   [Pipeline] Prêt (noms composés : {self.niveau_noms}).")
 
     def _collect_page_secrets(self, page_text: str, debug_mode: bool = False) -> set:
         """PASSE 1 sur une page : regex d'office puis LLM. Commun aux modes PDF et texte."""
@@ -131,14 +137,14 @@ class AnonymizationPipeline:
                 page_text = pages_text_cache.get(page_num, "")
                 if not page_text: continue
 
-                # On cherche CHAQUE secret global dans CETTE page
-                for secret in global_secrets_to_hide:
-                    # Recherche insensible à la casse pour maximiser la sécurité
-                    # Frontière de mot \b UNIQUEMENT pour la liste noire (évite qu'un terme court
-                    # morde dans un mot plus long) ; sans elle pour le reste, comme avant (plus
-                    # sûr pour les adresses, qui ne sont pas toujours entre deux frontières nettes).
-                    is_blacklisted = secret.strip().lower() in self.filter_engine.blacklist
-                    pattern = (r'\b' + re.escape(secret) + r'\b') if is_blacklisted else re.escape(secret)
+                # On cherche CHAQUE secret global dans CETTE page, un motif par secret (les zones se
+                # recouvrent sans se gêner). Recherche insensible à la casse pour maximiser la sécurité.
+                # Frontière de mot \b UNIQUEMENT pour la liste noire (évite qu'un terme court
+                # morde dans un mot plus long) ; sans elle pour le reste, comme avant (plus
+                # sûr pour les adresses, qui ne sont pas toujours entre deux frontières nettes).
+                # Les formes DÉRIVÉES (noms_composes) ont leurs propres garde-fous : mot entier, majuscule.
+                for secret, pattern in noms_composes.motifs(global_secrets_to_hide,
+                                                            self.filter_engine.blacklist, self.niveau_noms):
                     try:
                         for match in re.finditer(pattern, page_text, re.IGNORECASE):
                             fake_entity = {
@@ -236,15 +242,9 @@ class AnonymizationPipeline:
 
             if secrets:
                 # UNE seule passe, termes les plus longs d'abord : un remplacement n'est jamais re-remplacé.
-                # Frontière de mot \b pour les termes de la liste noire seulement (cf. process_file).
-                ordered = sorted(secrets, key=len, reverse=True)
-                parts = []
-                for term in ordered:
-                    escaped = re.escape(term)
-                    if term.strip().lower() in self.filter_engine.blacklist:
-                        escaped = r'\b' + escaped + r'\b'
-                    parts.append(escaped)
-                pattern = re.compile("|".join(parts), re.IGNORECASE)
+                # Frontière de mot \b pour les termes de la liste noire seulement (cf. process_file) ;
+                # formes dérivées des noms (noms_composes) : mot entier, initiale majuscule.
+                pattern = noms_composes.motif_unique(secrets, self.filter_engine.blacklist, self.niveau_noms)
                 text = pattern.sub(replace, text)
 
             with open(output_path, 'w', encoding='utf-8') as f:

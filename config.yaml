@@ -208,3 +208,17 @@ llm:
     {page_text}
 
     TA RÉPONSE (un terme par ligne, "terme exact => généralisation", ou rien) :
+# --- Masquage : variantes des noms rendus par le LLM (app/core/noms_composes.py) ---
+masquage:
+  # Le LLM rend parfois un nom sous UNE seule forme (« Clémence Ardouin-Vasseur ») : la chaîne exacte
+  # ne trouve pas « Dr Ardouin-Vasseur. » plus bas (fuite 1 tirage sur 3, mesure du 05/10/2026).
+  #   aucun   : chaîne exacte seulement (comportement d'avant)
+  #   titres  : + la forme sans civilité ni ponctuation (« Dr Ardouin-Vasseur. » -> « Ardouin-Vasseur »)
+  #   parties : + chaque mot d'un nom de personne, un nom à trait d'union restant ENTIER
+  #   civilites : + les morceaux d'un nom à trait d'union, SEULEMENT juste après une civilité (« Dr Ardouin »)
+  #   traits  : + les morceaux d'un nom à trait d'union PARTOUT (« Ardouin », « Vasseur » : mord « Grand Est »)
+  # Formes dérivées : mot entier, initiale majuscule exigée. Mesure du 07/10/2026 (corpus synthétique,
+  # 44 tirages réels) : fuites 8 -> 0 avec "civilites" ; prix : un prénom/nom qui est aussi un mot courant
+  # est masqué en début de phrase (« Claire anxiété », « Fort heureusement »). "aucun" tant que hedrox n'a
+  # pas tranché.
+  noms_composes: "aucun"
