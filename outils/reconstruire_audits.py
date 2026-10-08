@@ -67,7 +67,10 @@ def termes_texte(source: str, sortie: str):
 def termes_pdf(entree: str, sortie: str, tolerance: float = 0.6):
     """[(page 1-based, terme)] : mots de l'entrée absents de la sortie à la même place. None si les
     deux documents n'ont pas le même nombre de pages."""
-    import fitz
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
     a, b = fitz.open(entree), fitz.open(sortie)
     try:
         if len(a) != len(b):
