@@ -36,6 +36,9 @@ class BatchProcessor:
             os.makedirs(output_dir)
 
         self.pipeline = AnonymizationPipeline()
+        # config.yaml, audit.ecrire (vrai par défaut) : les *_audit.csv que lit outils/registre.py.
+        from app.core.config_loader import ConfigLoader
+        self.ecrire_audit = bool(ConfigLoader().get("audit.ecrire", True))
 
     def run(self) -> int:
         """Traite le dossier. Retourne le nombre de fichiers en échec."""
@@ -48,6 +51,7 @@ class BatchProcessor:
         print(f"--- Batch : {len(files)} fichiers (Debug={self.debug_mode}) ---")
 
         report_data = []
+        audits = 0
 
         for filename in tqdm(files, desc="Anonymisation"):
             in_path = os.path.join(self.input_dir, filename)
@@ -61,9 +65,12 @@ class BatchProcessor:
             else:
                 result_obj = self.pipeline.process_file(in_path, out_path, debug_mode=self.debug_mode)
 
-            # Sauvegarde audit individuel (si succès)
-            if result_obj.status == "SUCCESS" and result_obj.details:
+            # Audit individuel de chaque succès, MÊME VIDE (en-tête seul) : un audit absent veut dire
+            # « pas traité », jamais « rien masqué ». Avant le 08/10/2026, la liste des détails n'était
+            # jamais remplie : AUCUN audit n'était écrit, quoi que dise la procédure.
+            if result_obj.status == "SUCCESS" and self.ecrire_audit:
                 self._save_file_audit(result_obj)
+                audits += 1
 
             # Préparation rapport global (sans les détails trop lourds)
             res_dict = asdict(result_obj)
@@ -71,6 +78,9 @@ class BatchProcessor:
             report_data.append(res_dict)
 
         self._save_report(report_data)
+        if audits:
+            print(f"\n   [Audit] {audits} fichier(s) *_audit.csv écrit(s) dans le dossier de sortie : ils portent les "
+                  f"termes masqués EN CLAIR. Ce dossier ne se copie pas tel quel hors du coffre.")
 
         failed = [r for r in report_data if r["status"] != "SUCCESS"]
         if failed:

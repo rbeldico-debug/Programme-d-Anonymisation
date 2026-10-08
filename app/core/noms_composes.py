@@ -172,15 +172,25 @@ def motif_derive(forme: str) -> str:
     return debut + re.escape(forme) + fin
 
 
-def motifs(termes: Iterable[str], liste_noire: Set[str], niveau: str = "aucun") -> List[Tuple[str, str]]:
-    """(terme, motif regex) pour chaque terme rendu (traitement d'avant : \\b pour la liste noire seule)
-    et chaque forme dérivée (motif_derive). À compiler avec re.IGNORECASE. Le plus long d'abord."""
+def motifs(termes: Iterable[str], liste_noire: Set[str], niveau: str = "aucun",
+           majuscule: Set[str] = frozenset()) -> List[Tuple[str, str]]:
+    """(terme, motif regex) pour chaque terme rendu et chaque forme dérivée (motif_derive). À compiler
+    avec re.IGNORECASE. Le plus long d'abord.
+    - terme de `liste_noire` (liste noire, entrées du registre) : MOT ENTIER (filter_engine.motif_mot_entier :
+      bornes Unicode posées seulement sur un bord alphanumérique, apostrophes interchangeables) ;
+    - terme de `majuscule` (variantes du registre) : mot entier, initiale majuscule (motif_derive) ;
+    - autre terme : la chaîne telle quelle, sans borne (traitement d'avant)."""
+    from app.core.filter_engine import motif_mot_entier
     termes = [t for t in termes if t and t.strip()]
     paires = []
     for t in termes:
-        m = re.escape(t)
-        if t.strip().lower() in liste_noire:
-            m = r"\b" + m + r"\b"
+        cle = t.strip().lower()
+        if cle in liste_noire:
+            m = motif_mot_entier(t)
+        elif cle in majuscule:
+            m = motif_derive(t.strip())
+        else:
+            m = re.escape(t)
         paires.append((t, m))
     derives = deriver(termes, niveau)
     for d in derives:
@@ -194,9 +204,10 @@ def motifs(termes: Iterable[str], liste_noire: Set[str], niveau: str = "aucun") 
     return paires
 
 
-def motif_unique(termes: Iterable[str], liste_noire: Set[str], niveau: str = "aucun"):
+def motif_unique(termes: Iterable[str], liste_noire: Set[str], niveau: str = "aucun",
+                 majuscule: Set[str] = frozenset()):
     """Une seule regex, alternance du plus long au plus court (le mode texte remplace en UNE passe)."""
-    paires = motifs(termes, liste_noire, niveau)
+    paires = motifs(termes, liste_noire, niveau, majuscule)
     if not paires:
         return None
     return re.compile("|".join(m for _, m in paires), re.IGNORECASE)

@@ -228,3 +228,10 @@ masquage:
   # est masqué en début de phrase (« Claire anxiété », « Fort heureusement »). "aucun" tant que hedrox n'a
   # pas tranché.
   noms_composes: "aucun"
+
+# --- Audit : un <fichier>_audit.csv par fichier traité, dans le dossier de sortie ---
+# Colonnes page, text, entity_type, source, score : une ligne par passage masqué, le texte EN CLAIR.
+# C'est ce que lisent outils/registre.py (le registre des entrées) et outils/comparer_sorties.py.
+# Le dossier de sortie porte donc des identifiants : il reste dans le coffre. false = aucun audit.
+audit:
+  ecrire: true

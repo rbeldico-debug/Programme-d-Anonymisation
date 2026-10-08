@@ -247,7 +247,7 @@ class TestPipelineSansMoteur(unittest.TestCase):
         ]
         pl.llm_analyzer = mock.Mock()
         pl.llm_analyzer.get_final_redaction_list.side_effect = lambda page_text, initial_candidates, debug: initial_candidates
-        pl.filter_engine = mock.Mock(whitelist=set(), blacklist=set())
+        pl.filter_engine = mock.Mock(whitelist=set(), blacklist=set(), **{"est_blanc.return_value": False})
         self.pl = pl
 
     def test_rpps_d_office_et_patient_garde(self):

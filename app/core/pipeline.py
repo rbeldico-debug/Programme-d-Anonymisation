@@ -5,7 +5,7 @@ from app.analyzers.local_analyzer import LocalAnalyzer
 from app.analyzers.LlmAnalyzer import LlmAnalyzer, LlmIndisponibleError
 from app.core.text_mapper import TextMapper
 from app.domain.models import PipelineResult, RedactionDetail, AnonymizationCandidate
-from app.core.filter_engine import FilterEngine
+from app.core.filter_engine import FilterEngine, normaliser_terme, motif_mot_entier
 from app.core.date_shifter import shift_date_text
 from app.core.config_loader import ConfigLoader
 from app.core import noms_composes
@@ -30,9 +30,14 @@ class AnonymizationPipeline:
         print(f"   [Pipeline] Prêt (noms composés : {self.niveau_noms} ; "
               f"éponymes en contexte écartés : {'oui' if self.eponymes_en_contexte else 'non'}).")
 
-    def _collect_page_secrets(self, page_text: str, debug_mode: bool = False) -> set:
-        """PASSE 1 sur une page : regex d'office puis LLM. Commun aux modes PDF et texte."""
+    def _collect_page_secrets(self, page_text: str, debug_mode: bool = False, origines: dict = None) -> set:
+        """PASSE 1 sur une page : regex d'office puis LLM. Commun aux modes PDF et texte.
+        `origines` (facultatif) reçoit, pour l'audit, {terme: (type, source)} : le type Presidio quand le
+        terme en vient, « LLM » pour un terme que seul le LLM a rendu."""
         secrets = set()
+        if origines is None:
+            origines = {}
+        types_amorce = {}
 
         # A. SANCTION IMMÉDIATE (Hard Regex)
         # On ne demande PAS l'avis du LLM pour ça. C'est du masquage d'office.
@@ -45,9 +50,9 @@ class AnonymizationPipeline:
             clean_slice = res['text_slice'].strip()
 
             # LISTE BLANCHE : jamais masqué, même une date ou un téléphone repéré par regex,
-            # même comme amorce donnée au LLM. Comparaison insensible à la casse (la liste est
-            # chargée en minuscules).
-            if clean_slice.lower() in self.filter_engine.whitelist:
+            # même comme amorce donnée au LLM. Comparaison sur la forme normalisée (casse,
+            # apostrophes, ponctuation de bord ; accents GARDÉS) : filter_engine.normaliser_terme.
+            if self.filter_engine.est_blanc(clean_slice):
                 continue
 
             # LISTE ÉLARGIE DES TYPES "INDISCUTABLES"
@@ -59,6 +64,7 @@ class AnonymizationPipeline:
                     continue
 
                 secrets.add(clean_slice)
+                origines.setdefault(clean_slice, (entity_type, "REGLE"))
 
             # L'AMORCE : noms et lieux vus par Presidio/spaCy. Ce ne sont PAS des masquages d'office
             # (spaCy prend « Parkinson » ou « trazodone » pour des personnes) : ce sont des exemples
@@ -67,6 +73,7 @@ class AnonymizationPipeline:
                 if self.eponymes_en_contexte and eponyme_en_contexte(page_text, res['start'], res['end']):
                     continue
                 soft_candidates_for_llm.add(clean_slice)
+                types_amorce.setdefault(clean_slice, entity_type)
 
         # B. Validation LLM (Seulement pour les cas ambigus : Noms, Adresses)
         list_candidates = list(soft_candidates_for_llm)
@@ -81,8 +88,9 @@ class AnonymizationPipeline:
 
         for term in final_terms:
             clean_term = term.strip()
-            if clean_term and clean_term.lower() not in self.filter_engine.whitelist:
+            if clean_term and not self.filter_engine.est_blanc(clean_term):
                 secrets.add(clean_term)
+                origines.setdefault(clean_term, (types_amorce.get(clean_term, "LLM"), "LLM"))
 
         return secrets
 
@@ -119,6 +127,7 @@ class AnonymizationPipeline:
             # --- PASSE 1 : DÉCOUVERTE GLOBALE ---
             global_secrets_to_hide = set()
             pages_text_cache = {}
+            origines = {}
 
             for page_num in range(num_pages):
                 page_text = mapper.get_text_for_page(page_num)
@@ -126,10 +135,11 @@ class AnonymizationPipeline:
 
                 if not page_text or len(page_text.strip()) < 5: continue
 
-                global_secrets_to_hide |= self._collect_page_secrets(page_text, debug_mode)
+                global_secrets_to_hide |= self._collect_page_secrets(page_text, debug_mode, origines)
 
-            # LISTE NOIRE : toujours masquée, ajoutée à la liste globale AVANT la passe 2.
-            global_secrets_to_hide |= self.filter_engine.blacklist
+            # LISTE NOIRE et REGISTRE : toujours masqués, ajoutés à la liste globale AVANT la passe 2.
+            global_secrets_to_hide |= self._ajouter_permanents(origines)
+            details = []
 
             print(
                 f"   [Pipeline] Analyse terminée. {len(global_secrets_to_hide)} termes uniques identifiés pour suppression globale.")
@@ -146,14 +156,19 @@ class AnonymizationPipeline:
 
                 # On cherche CHAQUE secret global dans CETTE page, un motif par secret (les zones se
                 # recouvrent sans se gêner). Recherche insensible à la casse pour maximiser la sécurité.
-                # Frontière de mot \b UNIQUEMENT pour la liste noire (évite qu'un terme court
-                # morde dans un mot plus long) ; sans elle pour le reste, comme avant (plus
-                # sûr pour les adresses, qui ne sont pas toujours entre deux frontières nettes).
-                # Les formes DÉRIVÉES (noms_composes) ont leurs propres garde-fous : mot entier, majuscule.
+                # MOT ENTIER pour la liste noire et les entrées du registre (évite qu'un terme court
+                # morde dans un mot plus long : filter_engine.motif_mot_entier) ; sans borne pour le
+                # reste, comme avant (plus sûr pour les adresses, qui ne sont pas toujours entre deux
+                # frontières nettes). Les formes DÉRIVÉES (noms_composes) et les VARIANTES du registre :
+                # mot entier, initiale majuscule. L'audit garde chaque passage trouvé, en clair.
                 for secret, pattern in noms_composes.motifs(global_secrets_to_hide,
-                                                            self.filter_engine.blacklist, self.niveau_noms):
+                                                            self.filter_engine.formes_bornees(), self.niveau_noms,
+                                                            self.filter_engine.formes_majuscule()):
+                    typ, src = origines.get(secret, ("DERIVE", "NOMS_COMPOSES"))
                     try:
                         for match in re.finditer(pattern, page_text, re.IGNORECASE):
+                            details.append(RedactionDetail(page=page_num + 1, text=match.group(),
+                                                           entity_type=typ, source=src, score=1.0))
                             fake_entity = {
                                 "start": match.start(),
                                 "end": match.end(),
@@ -173,7 +188,8 @@ class AnonymizationPipeline:
             return PipelineResult(
                 file=file_name,
                 status="SUCCESS",
-                entities_found=len(all_redaction_zones)
+                entities_found=len(all_redaction_zones),
+                details=details
             )
 
         except LlmIndisponibleError as e:
@@ -207,14 +223,20 @@ class AnonymizationPipeline:
 
             secrets = set()
             metiers = {}
+            origines = {}
             for chunk in chunks:
                 if len(chunk.strip()) < 5: continue
-                secrets |= self._collect_page_secrets(chunk, debug_mode)
+                secrets |= self._collect_page_secrets(chunk, debug_mode, origines)
                 if generalize_metiers:
                     metiers.update(self._collect_page_metiers(chunk, debug_mode))
 
-            # LISTE NOIRE : toujours masquée, ajoutée à la liste globale AVANT le remplacement.
-            secrets |= self.filter_engine.blacklist
+            # LISTE NOIRE et REGISTRE : toujours masqués, ajoutés à la liste globale AVANT le remplacement.
+            secrets |= self._ajouter_permanents(origines)
+            details = []
+            # Pour l'audit : retrouver l'origine d'un passage remplacé par sa forme normalisée.
+            origine_par_cle = {}
+            for terme, o in origines.items():
+                origine_par_cle.setdefault(normaliser_terme(terme), o)
 
             if debug_mode:
                 print(f"   [Secrets] {secrets}")
@@ -239,19 +261,24 @@ class AnonymizationPipeline:
                             print(f"   [Métiers] terme non retrouvé, ignoré : {terme!r}")
 
             def replace(match):
+                typ, src = origine_par_cle.get(normaliser_terme(match.group()), ("DERIVE", "NOMS_COMPOSES"))
                 if shift_days is not None:
                     shifted = shift_date_text(match.group(), shift_days)
                     if shifted:
                         counter["shifted"] += 1
+                        details.append(RedactionDetail(page=1, text=match.group(), entity_type=typ,
+                                                       source="DECALAGE", score=1.0))
                         return shifted
                 counter["masked"] += 1
+                details.append(RedactionDetail(page=1, text=match.group(), entity_type=typ, source=src, score=1.0))
                 return TEXT_MASK
 
             if secrets:
                 # UNE seule passe, termes les plus longs d'abord : un remplacement n'est jamais re-remplacé.
                 # Frontière de mot \b pour les termes de la liste noire seulement (cf. process_file) ;
                 # formes dérivées des noms (noms_composes) : mot entier, initiale majuscule.
-                pattern = noms_composes.motif_unique(secrets, self.filter_engine.blacklist, self.niveau_noms)
+                pattern = noms_composes.motif_unique(secrets, self.filter_engine.formes_bornees(), self.niveau_noms,
+                                                     self.filter_engine.formes_majuscule())
                 text = pattern.sub(replace, text)
 
             with open(output_path, 'w', encoding='utf-8') as f:
@@ -260,7 +287,7 @@ class AnonymizationPipeline:
                   f"{counter['generalized']} métiers généralisés, {counter['metiers_not_found']} introuvables)")
 
             return PipelineResult(file=file_name, status="SUCCESS",
-                                  entities_found=counter["masked"] + counter["shifted"])
+                                  entities_found=counter["masked"] + counter["shifted"], details=details)
 
         except LlmIndisponibleError as e:
             print(f"   [Pipeline] ÉCHEC {file_name} : {e}")
@@ -272,6 +299,17 @@ class AnonymizationPipeline:
             traceback.print_exc()
             self._discard_output(input_path, output_path)
             return PipelineResult(file=file_name, status="FAILED", error=str(e), entities_found=0)
+
+    def _ajouter_permanents(self, origines: dict) -> set:
+        """Liste noire et registre (la liste blanche a déjà retiré du registre ce qu'elle libère)."""
+        fe = self.filter_engine
+        for t in fe.blacklist:
+            origines.setdefault(t, ("LISTE_NOIRE", "LISTE_NOIRE"))
+        for t in fe.registre_entrees:
+            origines.setdefault(t, ("REGISTRE", "REGISTRE"))
+        for t in fe.registre_variantes:
+            origines.setdefault(t, ("REGISTRE", "REGISTRE"))
+        return fe.a_masquer()
 
     @staticmethod
     def _split_text(text: str, max_chars: int = 4000) -> list:
@@ -298,7 +336,7 @@ class AnonymizationPipeline:
         candidates = []
         # Blacklist (ce sont des candidats à masquer)
         for term in self.filter_engine.blacklist:
-            for match in re.finditer(re.escape(term), text, re.IGNORECASE):
+            for match in re.finditer(motif_mot_entier(term), text, re.IGNORECASE):
                 candidates.append(AnonymizationCandidate(
                     start=match.start(), end=match.end(),
                     entity_type='USER_DEFINED', source='USER_BLACKLIST',
